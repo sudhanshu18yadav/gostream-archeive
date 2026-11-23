@@ -2,14 +2,19 @@ package stream
 
 import (
 	"slices"
+
+	"github.com/mariomac/gostream/order"
 )
 
 // Map returns a Stream consisting of the results of individually applying
-// the mapper function to each element of the target Stream.
-func (is *Stream[T]) Map[OT any](mapper func(T) OT) *Stream[OT] {
-	return &Stream[OT]{
+// the mapper function to each elements of the input Stream.
+// When both the input and output type are the same, the operation can be
+// invoked as the method input.Map(mapper).
+func Map[IT, OT any](input Stream[IT], mapper func(IT) OT) Stream[OT] {
+	return &iterableStream[OT]{
+		infinite: input.isInfinite(),
 		supply: func() iterator[OT] {
-			next := is.iterator()
+			next := input.iterator()
 			return func() (OT, bool) {
 				n, ok := next()
 				if !ok {
@@ -22,10 +27,20 @@ func (is *Stream[T]) Map[OT any](mapper func(T) OT) *Stream[OT] {
 	}
 }
 
-// Filter returns a Stream consisting of the items of the target stream that match the given
+func (is *iterableStream[T]) Map(mapper func(T) T) Stream[T] {
+	return Map[T, T](is, mapper)
+}
+
+// Filter returns a Stream consisting of the items of this stream that match the given
 // predicate (this is, applying the predicate function over the item returns true).
-func (is *Stream[T]) Filter(predicate func(T) bool) *Stream[T] {
-	return &Stream[T]{
+// This function is equivalent to invoking input.Filter(predicate) as method.
+func Filter[T any](input Stream[T], predicate func(T) bool) Stream[T] {
+	return input.Filter(predicate)
+}
+
+func (is *iterableStream[T]) Filter(predicate func(T) bool) Stream[T] {
+	return &iterableStream[T]{
+		infinite: is.infinite,
 		supply: func() iterator[T] {
 			next := is.iterator()
 			return func() (T, bool) {
@@ -46,8 +61,14 @@ func (is *Stream[T]) Filter(predicate func(T) bool) *Stream[T] {
 
 // Limit returns a stream consisting of the elements of this stream, truncated to
 // be no longer than maxSize in length.
-func (is *Stream[T]) Limit(maxSize int) *Stream[T] {
-	return &Stream[T]{
+// This function is equivalent to invoking input.Limit(maxSize) as method.
+func Limit[T any](input Stream[T], maxSize int) Stream[T] {
+	return input.Limit(maxSize)
+}
+
+func (is *iterableStream[T]) Limit(maxSize int) Stream[T] {
+	return &iterableStream[T]{
+		infinite: false,
 		supply: func() iterator[T] {
 			next := is.iterator()
 			count := 0
@@ -69,27 +90,19 @@ func (is *Stream[T]) Limit(maxSize int) *Stream[T] {
 	}
 }
 
-// IsCmp is an auxiliary function that has to be passed as argument to the stream.Stream's Distinct method,
-// to help with some limitations of Go generic type system.
-func Cmp[T comparable](i T) T {
-	return i
-}
-
 // Distinct returns a stream consisting of the distinct elements (according to equality operator)
 // of the input stream.
-// Due to the limitations of the Go generics system, you need to pass Cmp[T]
-// as argument to let compiler checking at runtime that the stream type T is comparable.
-func (is *Stream[T]) Distinct[O comparable](cmp func(T) O) *Stream[O] {
-	return &Stream[O]{supply: func() iterator[O] {
-		next := is.iterator()
-		elems := map[O]struct{}{}
-		return func() (O, bool) {
+func Distinct[T comparable](input Stream[T]) Stream[T] {
+	return &iterableStream[T]{supply: func() iterator[T] {
+		next := input.iterator()
+		elems := map[T]struct{}{}
+		return func() (T, bool) {
 			for {
-				nt, ok := next()
+				n, ok := next()
 				if !ok {
-					return *new(O), false
+					var zeroVal T
+					return zeroVal, false
 				}
-				n := cmp(nt)
 				if _, ok := elems[n]; !ok {
 					elems[n] = struct{}{}
 					return n, true
@@ -99,10 +112,17 @@ func (is *Stream[T]) Distinct[O comparable](cmp func(T) O) *Stream[O] {
 	}}
 }
 
-// Sorted Stream a stream consisting of the elements of the target Stream, sorted according
-// to the provided Comparator.
-func (is *Stream[T]) Sorted(comparator Comparator[T]) *Stream[T] {
-	return &Stream[T]{
+// Sorted returns a stream consisting of the elements of this stream, sorted according
+// to the provided order.Comparator.
+// This function is equivalent to invoking input.Sorted(comparator) as method.
+func Sorted[T any](input Stream[T], comparator order.Comparator[T]) Stream[T] {
+	return input.Sorted(comparator)
+}
+
+func (is *iterableStream[T]) Sorted(comparator order.Comparator[T]) Stream[T] {
+	assertFinite[T](is)
+	return &iterableStream[T]{
+		infinite: false,
 		supply: func() iterator[T] {
 			items := is.ToSlice()
 			slices.SortFunc(items, comparator)
@@ -125,10 +145,13 @@ func (is *Stream[T]) Sorted(comparator Comparator[T]) *Stream[T] {
 //
 // Due to the lazy nature of streams, if any of the mapped streams is infinite it will remain
 // unnoticed and some operations (Count, Reduce, Sorted, AllMatch...) will not end.
-func (is *Stream[IN]) FlatMap[OUT any](mapper func(IN) *Stream[OUT]) *Stream[OUT] {
-	return &Stream[OUT]{
+//
+// When both the input and output type are the same, the operation can be
+// invoked as the method input.FlatMap(mapper).
+func FlatMap[IN, OUT any](input Stream[IN], mapper func(IN) Stream[OUT]) Stream[OUT] {
+	return &iterableStream[OUT]{
 		supply: func() iterator[OUT] {
-			nextFromInputStream := is.iterator()
+			nextFromInputStream := input.iterator()
 			var nextFromOutputStream iterator[OUT]
 			return func() (OUT, bool) {
 				for {
@@ -155,10 +178,20 @@ func (is *Stream[IN]) FlatMap[OUT any](mapper func(IN) *Stream[OUT]) *Stream[OUT
 	}
 }
 
-// Peek returns a stream consisting of the elements of this stream, additionally performing
+func (is *iterableStream[T]) FlatMap(mapper func(T) Stream[T]) Stream[T] {
+	return FlatMap[T, T](is, mapper)
+}
+
+// Peek peturns a stream consisting of the elements of this stream, additionally performing
 // the provided action on each element as elements are consumed from the resulting stream.
-func (is *Stream[T]) Peek(consumer func(T)) *Stream[T] {
-	return &Stream[T]{
+// This function is equivalent to invoking input.Peek(consumer) as method.
+func Peek[T any](input Stream[T], consumer func(T)) Stream[T] {
+	return input.Peek(consumer)
+}
+
+func (is *iterableStream[T]) Peek(consumer func(T)) Stream[T] {
+	return &iterableStream[T]{
+		infinite: is.isInfinite(),
 		supply: func() iterator[T] {
 			next := is.iterator()
 			return func() (T, bool) {
@@ -176,8 +209,14 @@ func (is *Stream[T]) Peek(consumer func(T)) *Stream[T] {
 
 // Skip returns a stream consisting of the remaining elements of this stream after discarding
 // the first n elements of the stream.
-func (is *Stream[T]) Skip(n int) *Stream[T] {
-	return &Stream[T]{
+// This function is equivalent to invoking input.Skip(n) as method.
+func Skip[T any](input Stream[T], n int) Stream[T] {
+	return input.Skip(n)
+}
+
+func (is *iterableStream[T]) Skip(n int) Stream[T] {
+	return &iterableStream[T]{
+		infinite: is.isInfinite(),
 		supply: func() iterator[T] {
 			next := is.iterator()
 			skipped := 0
@@ -193,19 +232,30 @@ func (is *Stream[T]) Skip(n int) *Stream[T] {
 	}
 }
 
-// MapStream2 returns a Stream2 (two output types for key and value) consisting of the results of individually applying
-// the mapper function to each key-value pair of the target Stream.
-func (is *Stream[T]) MapStream2[K comparable, V any](mapper func(i T) (K, V)) *Stream2[K, V] {
-	return &Stream2[K, V]{
-		supply: func() iterator2[K, V] {
+func DropWhile[T any](input Stream[T], predicate func(T) bool) Stream[T]{
+	return input.DropWhile(predicate)
+}
+
+func (is *iterableStream[T]) DropWhile(predicate func(T) bool) Stream[T] {
+	 	return &iterableStream[T]{
+		infinite: is.isInfinite(),
+		supply: func() iterator[T] {
 			next := is.iterator()
-			return func() (K, V, bool) {
-				n, ok := next()
-				if !ok {
-					return *new(K), *new(V), false
+				var dropping = true
+				return func() (T, bool) {
+					for {
+					val, ok := next()
+					var sudo T
+					if !ok {
+						return sudo, false
+					}
+					if (dropping && !predicate(val)){
+						dropping = false
+					}
+					if !dropping{
+						return val, true
+					}
 				}
-				k, v := mapper(n)
-				return k, v, true
 			}
 		},
 	}
