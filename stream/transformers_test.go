@@ -129,3 +129,19 @@ func TestSkip(t *testing.T) {
 	assert.Empty(t, Of(1, 2, 3).Skip(3).ToSlice())
 	assert.Equal(t, []int{4, 5, 6}, Of(1, 2, 3, 4, 5, 6).Skip(3).ToSlice())
 }
+
+func TestDropWhile(t *testing.T){
+	nums := Of[int](4,3,2,1,5,6,7,8,1,2,3,4)
+	lessThan5 := func(x int) bool{
+		return x < 5
+	}
+	assert.Equal(t, []int{5,6,7,8,1,2,3,4} ,nums.DropWhile(lessThan5).ToSlice())
+
+	emptyNums := Of[int]()
+	assert.Equal(t, []int(nil), emptyNums.DropWhile(lessThan5).ToSlice())
+
+	lessThan50 := func(val int) bool{
+		return val < 50
+	}
+	assert.Equal(t, []int(nil), emptyNums.DropWhile(lessThan50).ToSlice())
+}

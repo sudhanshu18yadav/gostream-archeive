@@ -231,3 +231,32 @@ func (is *iterableStream[T]) Skip(n int) Stream[T] {
 		},
 	}
 }
+
+func DropWhile[T any](input Stream[T], predicate func(T) bool) Stream[T]{
+	return input.DropWhile(predicate)
+}
+
+func (is *iterableStream[T]) DropWhile(predicate func(T) bool) Stream[T] {
+	 	return &iterableStream[T]{
+		infinite: is.isInfinite(),
+		supply: func() iterator[T] {
+			next := is.iterator()
+				var dropping = true
+				return func() (T, bool) {
+					for {
+					val, ok := next()
+					var sudo T
+					if !ok {
+						return sudo, false
+					}
+					if (dropping && !predicate(val)){
+						dropping = false
+					}
+					if !dropping{
+						return val, true
+					}
+				}
+			}
+		},
+	}
+}
