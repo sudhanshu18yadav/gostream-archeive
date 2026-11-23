@@ -124,6 +124,7 @@ type Stream[T any] interface {
 	// as well as other functions using the standard Go iter.Seq type.
 	Seq() iter.Seq[T]
 
+	// DropWhile returns Stream consists only elements which pass tha given predicate till first false.
 	DropWhile(predicate func(T) bool) Stream[T]
 }
 
